@@ -26,10 +26,27 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
   })
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([])
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(0)
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
-    onDrop: (acceptedFiles) => {
-      setUploadedFiles(prev => [...prev, ...acceptedFiles])
+    onDrop: (acceptedFiles, rejectedFiles) => {
+      // Validate file sizes (max 50MB per file)
+      const maxSize = 50 * 1024 * 1024 // 50MB
+      const validFiles = acceptedFiles.filter(file => file.size <= maxSize)
+      const oversizedFiles = acceptedFiles.filter(file => file.size > maxSize)
+
+      if (oversizedFiles.length > 0) {
+        toast.error(`${oversizedFiles.length} file(s) too large (max 50MB each)`)
+      }
+
+      if (rejectedFiles.length > 0) {
+        toast.error(`${rejectedFiles.length} file(s) rejected (unsupported format)`)
+      }
+
+      if (validFiles.length > 0) {
+        setUploadedFiles(prev => [...prev, ...validFiles])
+        toast.success(`Added ${validFiles.length} file(s)`)
+      }
     },
     accept: {
       'application/pdf': ['.pdf'],
@@ -38,6 +55,7 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
       'application/zip': ['.zip'],
     },
     multiple: true,
+    maxSize: 50 * 1024 * 1024, // 50MB
   })
 
   const handleAdminAuth = async (e: React.FormEvent) => {
@@ -108,6 +126,26 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
 
   const removeFile = (index: number) => {
     setUploadedFiles(prev => prev.filter((_, i) => i !== index))
+  }
+
+  const formatFileSize = (bytes: number) => {
+    if (bytes === 0) return '0 Bytes'
+    const k = 1024
+    const sizes = ['Bytes', 'KB', 'MB', 'GB']
+    const i = Math.floor(Math.log(bytes) / Math.log(k))
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i]
+  }
+
+  const getFileIcon = (fileName: string) => {
+    const ext = fileName.split('.').pop()?.toLowerCase()
+    switch (ext) {
+      case 'pdf': return '📄'
+      case 'docx': return '📝'
+      case 'xls':
+      case 'xlsx': return '📊'
+      case 'zip': return '📦'
+      default: return '📄'
+    }
   }
 
   return (

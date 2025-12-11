@@ -27,7 +27,7 @@ class VectorStoreManager:
     def _get_embeddings(self):
         """Get OpenAI embeddings instance"""
         return OpenAIEmbeddings(
-            openai_api_key=os.getenv("OPENAI_API_KEY_EMBED"),
+            openai_api_key=self.openai_api_key,
             base_url=self.openai_api_base,
             model=self.embedding_model
         )

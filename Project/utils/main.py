@@ -10,10 +10,10 @@ from config import get_settings
 from models import *
 from state import app_state
 from parallel import ParallelProcessor
-from ..services.sharepoint import SharePointClient
-from ..services.file_extractor import FileExtractor
-from ..services.vector_store import VectorStoreManager
-from ..services.qa_engine import QAEngineBuilder
+from services.sharepoint import SharePointClient
+from services.file_extractor import FileExtractor
+from services.vector_store import VectorStoreManager
+from services.qa_engine import QAEngineBuilder
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

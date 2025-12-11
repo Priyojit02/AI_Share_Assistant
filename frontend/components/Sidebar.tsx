@@ -5,10 +5,7 @@ import { Dialog, Transition } from '@headlessui/react'
 import {
   XMarkIcon,
   HomeIcon,
-  DocumentIcon,
   ChatBubbleLeftRightIcon,
-  CloudIcon,
-  Cog6ToothIcon,
   ArrowRightOnRectangleIcon
 } from '@heroicons/react/24/outline'
 import Link from 'next/link'
@@ -16,10 +13,7 @@ import { usePathname } from 'next/navigation'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
-  { name: 'Hubs', href: '/dashboard/hubs', icon: DocumentIcon },
   { name: 'Chat', href: '/dashboard/chat', icon: ChatBubbleLeftRightIcon },
-  { name: 'SharePoint', href: '/dashboard/sharepoint', icon: CloudIcon },
-  { name: 'Settings', href: '/dashboard/settings', icon: Cog6ToothIcon },
 ]
 
 interface SidebarProps {
@@ -33,6 +27,8 @@ export default function Sidebar({ sidebarOpen, setSidebarOpen }: SidebarProps) {
   const handleLogout = () => {
     localStorage.removeItem('isAuthenticated')
     localStorage.removeItem('user')
+    localStorage.removeItem('loadTime')
+    sessionStorage.removeItem('pageLoaded')
     window.location.href = '/login'
   }
 
@@ -117,13 +113,13 @@ function SidebarContent({ pathname, onLogout }: SidebarContentProps) {
                     href={item.href}
                     className={`group flex gap-x-3 rounded-md p-2 text-sm leading-6 font-semibold ${
                       pathname === item.href
-                        ? 'bg-primary-50 text-primary-600'
+                        ? 'bg-primary-300 text-primary-700'
                         : 'text-secondary-700 hover:text-primary-600 hover:bg-secondary-50'
                     }`}
                   >
                     <item.icon
                       className={`h-6 w-6 shrink-0 ${
-                        pathname === item.href ? 'text-primary-600' : 'text-secondary-400 group-hover:text-primary-600'
+                        pathname === item.href ? 'text-primary-700' : 'text-secondary-400 group-hover:text-primary-600'
                       }`}
                       aria-hidden="true"
                     />

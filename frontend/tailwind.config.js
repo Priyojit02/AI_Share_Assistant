@@ -44,6 +44,10 @@ module.exports = {
           800: '#343a40',  // Very dark gray
           900: '#212529',  // Almost black
         },
+        create: {
+          500: '#b22222',  // Deep reddish orange for create button
+          600: '#a01c1c',  // Darker reddish orange for hover
+        },
       },
       animation: {
         'fade-in': 'fadeIn 0.5s ease-in-out',
