@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'next/navigation'
-import { PaperAirplaneIcon, DocumentIcon, UserCircleIcon, BackspaceIcon } from '@heroicons/react/24/outline'
+import { PaperAirplaneIcon, DocumentIcon, UserCircleIcon, BackspaceIcon, Bars3Icon, XMarkIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import toast from 'react-hot-toast'
+import { apiClient } from '@/lib/api'
 
 interface Message {
   id: string
@@ -22,6 +23,14 @@ interface Hub {
   file_count: number
 }
 
+interface Conversation {
+  id: string
+  title: string
+  messages: Message[]
+  createdAt: Date
+  updatedAt: Date
+}
+
 export default function ChatPage() {
   const searchParams = useSearchParams()
   const hubName = searchParams.get('hub') || ''
@@ -36,7 +45,106 @@ export default function ChatPage() {
   const [error, setError] = useState<string | null>(null)
   const [isHubOperationLoading, setIsHubOperationLoading] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<'connected' | 'disconnected' | 'checking'>('checking')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null)
+
+  // Load conversations for current hub
+  const loadConversations = (hub: string) => {
+    const stored = localStorage.getItem(`conversations_${hub}`)
+    if (stored) {
+      const parsedConversations = JSON.parse(stored).map((conv: any) => ({
+        ...conv,
+        createdAt: new Date(conv.createdAt),
+        updatedAt: new Date(conv.updatedAt),
+        messages: conv.messages.map((msg: any) => ({
+          ...msg,
+          timestamp: new Date(msg.timestamp)
+        }))
+      }))
+      setConversations(parsedConversations)
+    } else {
+      setConversations([])
+    }
+  }
+
+  // Save conversations for current hub
+  const saveConversations = (hub: string, convs: Conversation[]) => {
+    localStorage.setItem(`conversations_${hub}`, JSON.stringify(convs))
+  }
+
+  // Create new conversation
+  const createNewConversation = () => {
+    if (!selectedHub) return
+
+    const newConversation: Conversation = {
+      id: Date.now().toString(),
+      title: 'New Chat',
+      messages: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+
+    const updatedConversations = [newConversation, ...conversations]
+    setConversations(updatedConversations)
+    setCurrentConversationId(newConversation.id)
+    setMessages([])
+    saveConversations(selectedHub, updatedConversations)
+  }
+
+  // Load conversation
+  const loadConversation = (conversationId: string) => {
+    const conversation = conversations.find(c => c.id === conversationId)
+    if (conversation) {
+      setCurrentConversationId(conversationId)
+      setMessages(conversation.messages)
+    }
+  }
+
+  // Update conversation with new message
+  const updateConversation = (conversationId: string, newMessages: Message[]) => {
+    const updatedConversations = conversations.map(conv => {
+      if (conv.id === conversationId) {
+        // Generate title from first user message
+        let title = conv.title
+        if (title === 'New Chat' && newMessages.length > 0) {
+          const firstUserMessage = newMessages.find(m => m.role === 'user')
+          if (firstUserMessage) {
+            title = firstUserMessage.content.length > 50
+              ? firstUserMessage.content.substring(0, 50) + '...'
+              : firstUserMessage.content
+          }
+        }
+        return {
+          ...conv,
+          title,
+          messages: newMessages,
+          updatedAt: new Date()
+        }
+      }
+      return conv
+    })
+    setConversations(updatedConversations)
+    if (selectedHub) {
+      saveConversations(selectedHub, updatedConversations)
+    }
+  }
+
+  // Delete conversation
+  const deleteConversation = (conversationId: string) => {
+    const updatedConversations = conversations.filter(c => c.id !== conversationId)
+    setConversations(updatedConversations)
+    
+    if (currentConversationId === conversationId) {
+      setCurrentConversationId(null)
+      setMessages([])
+    }
+    
+    if (selectedHub) {
+      saveConversations(selectedHub, updatedConversations)
+    }
+  }
 
   // Check authentication on page load - logout ONLY on actual refresh
   useEffect(() => {
@@ -72,24 +180,41 @@ export default function ChatPage() {
     localStorage.setItem('lastPageLoad', now.toString())
   }, [])
 
-  // Load messages from localStorage on mount
   useEffect(() => {
-    const savedMessages = localStorage.getItem(`chat_${selectedHub}`)
-    if (savedMessages) {
-      try {
-        setMessages(JSON.parse(savedMessages))
-      } catch (e) {
-        console.error('Failed to load saved messages:', e)
+    const switchHub = async () => {
+      if (selectedHub && selectedHub !== previousHub) {
+        // Save current conversation before switching
+        if (previousHub && currentConversationId && messages.length > 0) {
+          updateConversation(currentConversationId, messages)
+        }
+        
+        // Unload previous hub if it exists and is different
+        if (previousHub) {
+          await unloadHub(previousHub)
+        }
+        
+        // Load new hub
+        await loadHub()
+        
+        // Load conversations for the new hub
+        loadConversations(selectedHub)
+        
+        // Start fresh session - no current conversation selected
+        setCurrentConversationId(null)
+        setMessages([])
+        
+        setPreviousHub(selectedHub)
       }
     }
+    switchHub()
   }, [selectedHub])
 
-  // Save messages to localStorage whenever they change
+  // Save messages to localStorage when they change
   useEffect(() => {
-    if (messages.length > 0 && selectedHub) {
-      localStorage.setItem(`chat_${selectedHub}`, JSON.stringify(messages))
+    if (currentConversationId && messages.length > 0) {
+      updateConversation(currentConversationId, messages)
     }
-  }, [messages, selectedHub])
+  }, [messages, currentConversationId])
 
   useEffect(() => {
     fetchHubs()
@@ -105,25 +230,10 @@ export default function ChatPage() {
     return () => clearInterval(interval)
   }, [])
 
-  useEffect(() => {
-    const switchHub = async () => {
-      if (selectedHub && selectedHub !== previousHub) {
-        // Unload previous hub if it exists and is different
-        if (previousHub) {
-          await unloadHub(previousHub)
-        }
-        // Load new hub
-        await loadHub()
-        setPreviousHub(selectedHub)
-      }
-    }
-    switchHub()
-  }, [selectedHub])
-
   // Check backend connection status
   const checkConnection = async () => {
     try {
-      const response = await fetch('/api/health')
+      const response = await apiClient.get('/health')
       setConnectionStatus(response.ok ? 'connected' : 'disconnected')
     } catch (error) {
       setConnectionStatus('disconnected')
@@ -139,7 +249,7 @@ export default function ChatPage() {
 
   const fetchHubs = async () => {
     try {
-      const response = await fetch('/api/hubs')
+      const response = await apiClient.get('/hubs')
       if (response.ok) {
         const data = await response.json()
         setHubs(data.hubs)
@@ -157,9 +267,7 @@ export default function ChatPage() {
 
     setIsHubOperationLoading(true)
     try {
-      const response = await fetch(`/api/hubs/${selectedHub}/load`, {
-        method: 'POST',
-      })
+      const response = await apiClient.post(`/hubs/${selectedHub}/load`)
 
       if (response.ok) {
         const result = await response.json()
@@ -167,9 +275,23 @@ export default function ChatPage() {
         fetchLoadedHubs() // Update loaded hubs list
         // Auto-refresh hub list to get latest status
         fetchHubs()
+        // Start fresh chat session for the loaded hub
+        localStorage.removeItem(`chat_${selectedHub}`)
+        setMessages([])
+        setConnectionStatus('connected')
       } else {
         const error = await response.json()
-        toast.error(error.detail || 'Failed to load hub')
+        let errorMessage = 'Failed to load hub'
+        if (error.detail) {
+          if (Array.isArray(error.detail)) {
+            errorMessage = error.detail.map((err: any) => err.msg || (typeof err.message === 'string' ? err.message : JSON.stringify(err.message))).join(', ')
+          } else if (typeof error.detail === 'string') {
+            errorMessage = error.detail
+          } else if (error.detail.msg) {
+            errorMessage = error.detail.msg
+          }
+        }
+        toast.error(errorMessage)
         // If load fails, clear selection
         setSelectedHub('')
         setPreviousHub(null)
@@ -187,25 +309,32 @@ export default function ChatPage() {
   const unloadHub = async (hubName: string) => {
     setIsHubOperationLoading(true)
     try {
-      const response = await fetch(`/api/hubs/${hubName}/unload`, {
-        method: 'POST',
-      })
+      const response = await apiClient.post(`/hubs/${hubName}/unload`)
 
       if (response.ok) {
         const result = await response.json()
         toast.success(result.message || `Hub "${hubName}" unloaded`)
         fetchLoadedHubs() // Update loaded hubs list
         fetchHubs() // Refresh hub list
-        // If the unloaded hub was selected, clear selection and messages
+        // If the unloaded hub was selected, clear selection but keep conversations
         if (selectedHub === hubName) {
           setSelectedHub('')
           setPreviousHub(null)
           setMessages([])
-          localStorage.removeItem(`chat_${hubName}`)
         }
       } else {
         const error = await response.json()
-        toast.error(error.detail || 'Failed to unload hub')
+        let errorMessage = 'Failed to unload hub'
+        if (error.detail) {
+          if (Array.isArray(error.detail)) {
+            errorMessage = error.detail.map((err: any) => err.msg || (typeof err.message === 'string' ? err.message : JSON.stringify(err.message))).join(', ')
+          } else if (typeof error.detail === 'string') {
+            errorMessage = error.detail
+          } else if (error.detail.msg) {
+            errorMessage = error.detail.msg
+          }
+        }
+        toast.error(errorMessage)
       }
     } catch (error) {
       console.error('Failed to unload hub:', error)
@@ -215,9 +344,41 @@ export default function ChatPage() {
     }
   }
 
+  const syncHub = async () => {
+    if (!selectedHub) return
+    setIsHubOperationLoading(true)
+    try {
+      const response = await apiClient.post(`/hubs/${selectedHub}/sync`)
+
+      if (response.ok) {
+        const result = await response.json()
+        toast.success(result.message || 'Sync completed')
+        fetchHubs() // Refresh hub list to get updated file count
+      } else {
+        const error = await response.json()
+        let errorMessage = 'Sync failed'
+        if (error.detail) {
+          if (Array.isArray(error.detail)) {
+            errorMessage = error.detail.map((err: any) => err.msg || (typeof err.message === 'string' ? err.message : JSON.stringify(err.message))).join(', ')
+          } else if (typeof error.detail === 'string') {
+            errorMessage = error.detail
+          } else if (error.detail.msg) {
+            errorMessage = error.detail.msg
+          }
+        }
+        toast.error(errorMessage)
+      }
+    } catch (error) {
+      console.error('Sync error:', error)
+      toast.error('Sync failed')
+    } finally {
+      setIsHubOperationLoading(false)
+    }
+  }
+
   const fetchLoadedHubs = async () => {
     try {
-      const response = await fetch('/api/hubs/loaded/list')
+      const response = await apiClient.get('/hubs/loaded/list')
       if (response.ok) {
         const data = await response.json()
         setLoadedHubs(data.loaded_hubs)
@@ -228,17 +389,39 @@ export default function ChatPage() {
   }
 
   const clearChat = () => {
-    setMessages([])
-    if (selectedHub) {
-      localStorage.removeItem(`chat_${selectedHub}`)
+    if (currentConversationId) {
+      const updatedMessages: Message[] = []
+      setMessages(updatedMessages)
+      updateConversation(currentConversationId, updatedMessages)
+      toast.success('Chat cleared')
     }
-    toast.success('Chat cleared')
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      sendMessage()
+    }
   }
 
   const sendMessage = async (retryCount = 0) => {
     if (!input.trim() || !selectedHub || isLoading) return
 
-    setError(null)
+    // Create new conversation if none exists
+    if (!currentConversationId) {
+      const newConversation: Conversation = {
+        id: Date.now().toString(),
+        title: 'New Chat',
+        messages: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+      const updatedConversations = [newConversation, ...conversations]
+      setConversations(updatedConversations)
+      setCurrentConversationId(newConversation.id)
+      saveConversations(selectedHub, updatedConversations)
+    }
+
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -251,16 +434,10 @@ export default function ChatPage() {
     setIsLoading(true)
 
     try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          query: userMessage.content,
-          hub_name: selectedHub,
-          include_sources: true,
-        }),
+      const response = await apiClient.post('/chat', {
+        query: userMessage.content,
+        hub_name: selectedHub,
+        include_sources: true,
       })
 
       if (response.ok) {
@@ -273,17 +450,28 @@ export default function ChatPage() {
           sources: data.sources,
         }
         setMessages(prev => [...prev, assistantMessage])
-        // Update loaded hubs list in case backend auto-loaded the hub
+        // Update conversation title if it's still "New Chat"
+        if (currentConversationId) {
+          updateConversation(currentConversationId, [...messages, userMessage, assistantMessage])
+        }
         fetchLoadedHubs()
-        setConnectionStatus('connected') // Reset connection status on success
+        setConnectionStatus('connected')
       } else {
         const errorData = await response.json()
-        const errorMsg = errorData.detail || 'Failed to get response'
+        let errorMsg = 'Failed to get response'
+        if (errorData.detail) {
+          if (Array.isArray(errorData.detail)) {
+            errorMsg = errorData.detail.map((err: any) => err.msg || (typeof err.message === 'string' ? err.message : JSON.stringify(err.message))).join(', ')
+          } else if (typeof errorData.detail === 'string') {
+            errorMsg = errorData.detail
+          } else if (errorData.detail.msg) {
+            errorMsg = errorData.detail.msg
+          }
+        }
         
-        // Auto-retry logic for network errors (max 2 retries)
         if (retryCount < 2 && (errorMsg.includes('network') || errorMsg.includes('connection'))) {
           console.log(`Retrying chat request (attempt ${retryCount + 1})...`)
-          setTimeout(() => sendMessage(retryCount + 1), 2000) // Retry after 2 seconds
+          setTimeout(() => sendMessage(retryCount + 1), 2000)
           return
         }
         
@@ -297,16 +485,18 @@ export default function ChatPage() {
           timestamp: new Date(),
         }
         setMessages(prev => [...prev, errorMessage])
+        if (currentConversationId) {
+          updateConversation(currentConversationId, [...messages, userMessage, errorMessage])
+        }
       }
     } catch (error) {
       console.error('Chat error:', error)
       const errorMsg = 'Network error - please check your connection'
       setConnectionStatus('disconnected')
       
-      // Auto-retry for network errors
       if (retryCount < 2) {
         console.log(`Retrying chat request due to network error (attempt ${retryCount + 1})...`)
-        setTimeout(() => sendMessage(retryCount + 1), 3000) // Retry after 3 seconds
+        setTimeout(() => sendMessage(retryCount + 1), 3000)
         return
       }
       
@@ -320,6 +510,9 @@ export default function ChatPage() {
         timestamp: new Date(),
       }
       setMessages(prev => [...prev, errorMessage])
+      if (currentConversationId) {
+        updateConversation(currentConversationId, [...messages, userMessage, errorMessage])
+      }
     } finally {
       setIsLoading(false)
     }
@@ -329,96 +522,218 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      sendMessage()
-    }
-  }
-
   return (
-    <div className="h-[calc(100vh-8rem)] flex flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between p-4 border-b border-secondary-200">
-        <div>
-          <h1 className="text-2xl font-bold text-secondary-900">AI Chat Assistant</h1>
-          <p className="text-sm text-secondary-600">
-            Ask questions about your documents
-          </p>
-        </div>
-        <div className="flex items-center space-x-4">
-          {/* Connection Status */}
-          <div className="flex items-center text-xs">
-            <div className={`w-2 h-2 rounded-full mr-2 ${
-              connectionStatus === 'connected' ? 'bg-green-500' :
-              connectionStatus === 'disconnected' ? 'bg-red-500' : 'bg-yellow-500'
-            }`}></div>
-            <span className={`${
-              connectionStatus === 'connected' ? 'text-green-600' :
-              connectionStatus === 'disconnected' ? 'text-red-600' : 'text-yellow-600'
-            }`}>
-              {connectionStatus === 'connected' ? 'Connected' :
-               connectionStatus === 'disconnected' ? 'Disconnected' : 'Checking...'}
-            </span>
-          </div>
-          <select
-            value={selectedHub}
-            onChange={(e) => setSelectedHub(e.target.value)}
-            className="input-field max-w-xs"
-            disabled={isLoadingHubs || isHubOperationLoading}
-          >
-            <option value="">Select a hub...</option>
-            {hubs.map((hub) => (
-              <option key={hub.hub_name} value={hub.hub_name}>
-                {hub.hub_name} ({hub.file_count} files) {loadedHubs.includes(hub.hub_name) ? '●' : ''}
-              </option>
-            ))}
-          </select>
-          {isHubOperationLoading && (
-            <div className="flex items-center text-sm text-secondary-600">
-              <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-primary-600 mr-2"></div>
-              Processing...
-            </div>
-          )}
-          {selectedHub && loadedHubs.includes(selectedHub) && !isHubOperationLoading && (
-            <div className="flex items-center text-sm text-green-600">
-              <div className="w-2 h-2 bg-green-500 rounded-full mr-2"></div>
-              Hub loaded
-            </div>
-          )}
-          {loadedHubs.length > 0 && (
+    <div className="h-screen flex">
+      {/* Sidebar */}
+      <div className={`bg-white border-r border-secondary-200 transition-all duration-300 ${
+        sidebarCollapsed ? 'w-0 overflow-hidden' : 'w-80'
+      }`}>
+        <div className="p-4 border-b border-secondary-200">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-lg font-semibold text-secondary-900">Hub Controls</h2>
             <button
-              onClick={async () => {
-                setIsHubOperationLoading(true)
-                // Unload all loaded hubs
-                const unloadPromises = loadedHubs.map(hubName => unloadHub(hubName))
-                await Promise.all(unloadPromises)
-                // Clear selection if current hub was unloaded
-                if (selectedHub && loadedHubs.includes(selectedHub)) {
-                  setSelectedHub('')
-                  setPreviousHub(null)
-                }
-                setIsHubOperationLoading(false)
-                toast.success(`Unloaded ${loadedHubs.length} hub(s)`)
-              }}
-              disabled={isHubOperationLoading}
-              className="btn-secondary text-xs px-3 py-1 disabled:opacity-50"
-              title="Unload all loaded hubs for better memory management"
+              onClick={() => setSidebarCollapsed(true)}
+              className="p-1 rounded-md hover:bg-secondary-100"
             >
-              Unload All ({loadedHubs.length})
+              <XMarkIcon className="h-5 w-5 text-secondary-500" />
             </button>
+          </div>
+          
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-secondary-700 mb-2">
+                Select Hub
+              </label>
+              <select
+                value={selectedHub}
+                onChange={(e) => setSelectedHub(e.target.value)}
+                className="w-full border border-secondary-300 rounded px-3 py-2 bg-white"
+                disabled={isLoadingHubs}
+              >
+                <option value="">Select a hub...</option>
+                {hubs.map((hub) => (
+                  <option key={hub.hub_name} value={hub.hub_name}>
+                    {hub.hub_name} ({hub.file_count} files)
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {selectedHub && (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-secondary-600">Status:</span>
+                  <span className={`text-sm ${loadedHubs.includes(selectedHub) ? 'text-green-600' : 'text-secondary-500'}`}>
+                    {loadedHubs.includes(selectedHub) ? 'Loaded' : 'Not Loaded'}
+                  </span>
+                </div>
+                
+                <button
+                  onClick={loadHub}
+                  disabled={loadedHubs.includes(selectedHub) || isHubOperationLoading}
+                  className="w-full btn-primary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isHubOperationLoading ? 'Loading...' : 'Load Hub'}
+                </button>
+                
+                <button
+                  onClick={() => unloadHub(selectedHub)}
+                  disabled={!loadedHubs.includes(selectedHub) || isHubOperationLoading}
+                  className="w-full btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isHubOperationLoading ? 'Unloading...' : 'Unload Hub'}
+                </button>
+                
+                <button
+                  onClick={syncHub}
+                  disabled={!loadedHubs.includes(selectedHub) || isHubOperationLoading}
+                  className="w-full btn-secondary disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {isHubOperationLoading ? 'Syncing...' : 'Sync Hub'}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+        
+        <div className="p-4 border-b border-secondary-200">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-secondary-900">Chat History</h2>
+          </div>
+          {selectedHub && (
+            <div className="mt-2">
+              <button
+                onClick={createNewConversation}
+                className="w-full btn-primary text-sm py-2"
+              >
+                <PlusIcon className="h-4 w-4 mr-1 inline" />
+                New Chat
+              </button>
+            </div>
+          )}
+        </div>
+        
+        <div className="flex-1 overflow-y-auto">
+          {!selectedHub ? (
+            <div className="p-4 text-center text-secondary-500">
+              Select a hub to view conversations
+            </div>
+          ) : conversations.length === 0 ? (
+            <div className="p-4 text-center text-secondary-500">
+              No conversations yet. Start a new chat!
+            </div>
+          ) : (
+            <div className="p-2">
+              {conversations.map((conversation) => (
+                <div
+                  key={conversation.id}
+                  className={`group p-3 mb-2 rounded-lg cursor-pointer transition-colors ${
+                    currentConversationId === conversation.id
+                      ? 'bg-primary-100 border border-primary-200'
+                      : 'hover:bg-secondary-50'
+                  }`}
+                  onClick={() => loadConversation(conversation.id)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-medium text-secondary-900 truncate">
+                        {conversation.title}
+                      </h3>
+                      <p className="text-xs text-secondary-500 mt-1">
+                        {conversation.updatedAt.toLocaleDateString()} • {conversation.messages.length} messages
+                      </p>
+                    </div>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        if (confirm('Delete this conversation?')) {
+                          deleteConversation(conversation.id)
+                        }
+                      }}
+                      className="p-1 text-secondary-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      <TrashIcon className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>
+
+      {/* Main Chat Area */}
+      <div className="flex-1 flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-secondary-200 bg-white">
+          <div className="flex items-center space-x-4">
+            {sidebarCollapsed && (
+              <button
+                onClick={() => setSidebarCollapsed(false)}
+                className="p-2 rounded-md hover:bg-secondary-100"
+              >
+                <Bars3Icon className="h-5 w-5 text-secondary-500" />
+              </button>
+            )}
+            <div>
+              <div className="flex items-center space-x-2 mb-1">
+                <select
+                  value={selectedHub}
+                  onChange={(e) => setSelectedHub(e.target.value)}
+                  className="text-sm border border-secondary-300 rounded px-2 py-1 bg-white"
+                  disabled={isLoadingHubs}
+                >
+                  <option value="">Select a hub...</option>
+                  {hubs.map((hub) => (
+                    <option key={hub.hub_name} value={hub.hub_name}>
+                      {hub.hub_name} ({hub.file_count} files)
+                    </option>
+                  ))}
+                </select>
+                {selectedHub && loadedHubs.includes(selectedHub) && (
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
+                    Loaded
+                  </span>
+                )}
+              </div>
+              <h1 className="text-lg font-semibold text-secondary-900">
+                {currentConversationId 
+                  ? conversations.find(c => c.id === currentConversationId)?.title || 'Chat'
+                  : selectedHub 
+                    ? 'Start a new conversation' 
+                    : 'AI Chat Assistant'
+                }
+              </h1>
+              <p className="text-sm text-secondary-600">
+                {selectedHub ? 'Ask questions about your documents' : 'Select a hub to start chatting'}
+              </p>
+            </div>
+          </div>
+          
+          <button
+            onClick={clearChat}
+            disabled={messages.length === 0}
+            className="btn-secondary text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Clear chat history"
+          >
+            <BackspaceIcon className="h-4 w-4 mr-1" />
+            Clear Chat
+          </button>
+        </div>
 
       {/* Chat Messages */}
       <div className="flex-1 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 ? (
           <div className="text-center py-12">
             <DocumentIcon className="mx-auto h-12 w-12 text-secondary-400" />
-            <h3 className="mt-2 text-sm font-medium text-secondary-900">Start a conversation</h3>
+            <h3 className="mt-2 text-sm font-medium text-secondary-900">
+              {currentConversationId ? 'Start chatting' : 'Select or create a conversation'}
+            </h3>
             <p className="mt-1 text-sm text-secondary-500">
-              Select a hub and ask questions about your documents
+              {selectedHub 
+                ? 'Ask questions about your documents' 
+                : 'Select a hub first'
+              }
             </p>
           </div>
         ) : (
@@ -494,10 +809,16 @@ export default function ChatPage() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyPress={handleKeyPress}
-              placeholder={selectedHub ? "Ask a question about your documents..." : "Select a hub first"}
+              placeholder={
+                !selectedHub 
+                  ? "Select a hub first" 
+                  : !currentConversationId 
+                    ? "Create or select a conversation to start chatting"
+                    : "Ask a question about your documents..."
+              }
               className="w-full input-field resize-none"
               rows={3}
-              disabled={!selectedHub || isLoading}
+              disabled={!selectedHub || !currentConversationId || isLoading}
             />
           </div>
           <div className="flex space-x-2">
@@ -510,8 +831,8 @@ export default function ChatPage() {
               <BackspaceIcon className="h-5 w-5" />
             </button>
             <button
-              onClick={sendMessage}
-              disabled={!input.trim() || !selectedHub || isLoading}
+              onClick={() => sendMessage()}
+              disabled={!input.trim() || !selectedHub || !currentConversationId || isLoading}
               className="btn-primary self-end disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <PaperAirplaneIcon className="h-5 w-5" />
@@ -522,6 +843,7 @@ export default function ChatPage() {
           Press Enter to send, Shift+Enter for new line
         </p>
       </div>
+    </div>
     </div>
   )
 }

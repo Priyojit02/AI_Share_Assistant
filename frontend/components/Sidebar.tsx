@@ -97,12 +97,12 @@ function SidebarContent({ pathname, onLogout }: SidebarContentProps) {
     <div className="flex grow flex-col gap-y-5 overflow-y-auto bg-white px-6 pb-4 shadow-sm border-r border-secondary-200">
       <div className="flex h-16 shrink-0 items-center">
         <div className="flex items-center">
-          <div className="h-8 w-8 bg-primary-600 rounded-lg flex items-center justify-center">
-            <svg className="h-5 w-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-            </svg>
-          </div>
-          <span className="ml-3 text-lg font-semibold text-secondary-900">PwC AI</span>
+          <img
+            src="/pwc-logo.jpg"
+            alt="PwC Logo"
+            className="h-8 w-auto"
+          />
+          <span className="ml-3 text-lg font-semibold text-secondary-900">AIFileAssistant </span>
         </div>
       </div>
       <nav className="flex flex-1 flex-col">

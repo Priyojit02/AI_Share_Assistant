@@ -9,11 +9,12 @@ import toast from 'react-hot-toast'
 interface CreateHubModalProps {
   onClose: () => void
   onCreate: (data: any) => void
+  show?: boolean
 }
 
 type Step = 'auth' | 'create'
 
-export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProps) {
+export default function CreateHubModal({ onClose, onCreate, show = false }: CreateHubModalProps) {
   const [currentStep, setCurrentStep] = useState<Step>('auth')
   const [adminPassword, setAdminPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
@@ -30,22 +31,32 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop: (acceptedFiles, rejectedFiles) => {
-      // Validate file sizes (max 50MB per file)
-      const maxSize = 50 * 1024 * 1024 // 50MB
-      const validFiles = acceptedFiles.filter(file => file.size <= maxSize)
-      const oversizedFiles = acceptedFiles.filter(file => file.size > maxSize)
+      try {
+        // Validate file sizes (max 50MB per file)
+        const maxSize = 50 * 1024 * 1024 // 50MB
+        const validFiles = acceptedFiles.filter(file => file && file.size <= maxSize)
+        const oversizedFiles = acceptedFiles.filter(file => file && file.size > maxSize)
 
-      if (oversizedFiles.length > 0) {
-        toast.error(`${oversizedFiles.length} file(s) too large (max 50MB each)`)
-      }
+        if (oversizedFiles.length > 0) {
+          toast.error(`${oversizedFiles.length} file(s) too large (max 50MB each)`)
+        }
 
-      if (rejectedFiles.length > 0) {
-        toast.error(`${rejectedFiles.length} file(s) rejected (unsupported format)`)
-      }
+        if (rejectedFiles.length > 0) {
+          toast.error(`${rejectedFiles.length} file(s) rejected (unsupported format)`)
+        }
 
-      if (validFiles.length > 0) {
-        setUploadedFiles(prev => [...prev, ...validFiles])
-        toast.success(`Added ${validFiles.length} file(s)`)
+        if (validFiles.length > 0) {
+          setUploadedFiles(prev => {
+            // Prevent duplicates based on name and size
+            const existingFiles = new Set(prev.map(f => `${f.name}-${f.size}`))
+            const newFiles = validFiles.filter(f => !existingFiles.has(`${f.name}-${f.size}`))
+            return [...prev, ...newFiles]
+          })
+          toast.success(`Added ${validFiles.length} file(s)`)
+        }
+      } catch (error) {
+        console.error('Error handling file drop:', error)
+        toast.error('Error processing files')
       }
     },
     accept: {
@@ -53,6 +64,7 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
       'application/vnd.ms-excel': ['.xls', '.xlsx'],
       'application/zip': ['.zip'],
+      'text/plain': ['.txt'],
     },
     multiple: true,
     maxSize: 50 * 1024 * 1024, // 50MB
@@ -98,27 +110,33 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
         // Create FormData for file upload
         const uploadData = new FormData()
         uploadData.append('hub_name', formData.hub_name)
-        uploadedFiles.forEach(file => {
-          uploadData.append('files', file)
+        
+        // Validate files before adding to FormData
+        uploadedFiles.forEach((file, index) => {
+          if (file && file.name && file.size > 0) {
+            uploadData.append('files', file)
+          } else {
+            console.warn(`Skipping invalid file at index ${index}:`, file)
+          }
         })
 
-        const response = await fetch('/api/hubs/from-upload', {
-          method: 'POST',
-          body: uploadData,
-        })
-
-        if (response.ok) {
-          const result = await response.json()
-          toast.success('Hub created successfully!')
-          onClose()
-        } else {
-          const error = await response.json()
-          toast.error(error.detail || 'Failed to create hub')
-        }
+        await onCreate(uploadData)
       }
     } catch (error) {
       console.error('Create hub error:', error)
-      toast.error('Failed to create hub')
+      let errorMessage = 'Failed to create hub'
+      if (error instanceof Error) {
+        errorMessage = error.message
+      } else if (typeof error === 'string') {
+        errorMessage = error
+      } else if (error && typeof error === 'object') {
+        if ('message' in error && typeof error.message === 'string') {
+          errorMessage = error.message
+        } else {
+          errorMessage = JSON.stringify(error)
+        }
+      }
+      toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)
     }
@@ -144,6 +162,7 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
       case 'xls':
       case 'xlsx': return '📊'
       case 'zip': return '📦'
+      case 'txt': return '📄'
       default: return '📄'
     }
   }
@@ -354,7 +373,7 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
                                 }
                               </p>
                               <p className="mt-1 text-xs text-secondary-500">
-                                Supports PDF, DOCX, Excel, and ZIP files
+                              Supports PDF, DOCX, Excel, ZIP, and TXT files
                               </p>
                             </div>
 
@@ -366,8 +385,10 @@ export default function CreateHubModal({ onClose, onCreate }: CreateHubModalProp
                                 </p>
                                 <div className="max-h-32 overflow-y-auto space-y-1">
                                   {uploadedFiles.map((file, index) => (
-                                    <div key={index} className="flex items-center justify-between bg-secondary-50 rounded px-3 py-2">
-                                      <span className="text-sm text-secondary-700 truncate">{file.name}</span>
+                                    <div key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between bg-secondary-50 rounded px-3 py-2">
+                                      <span className="text-sm text-secondary-700 truncate">
+                                        {file?.name || `File ${index + 1}`}
+                                      </span>
                                       <button
                                         type="button"
                                         onClick={() => removeFile(index)}

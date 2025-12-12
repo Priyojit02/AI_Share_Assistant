@@ -1,5 +1,5 @@
 # main.py
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
@@ -243,7 +243,7 @@ async def ingest_from_sharepoint(
 
 @app.post("/hubs/from-upload", response_model=IngestResponse)
 async def ingest_from_upload(
-    hub_name: str,
+    hub_name: str = Form(...),
     files: List[UploadFile] = File(...)
 ):
     """

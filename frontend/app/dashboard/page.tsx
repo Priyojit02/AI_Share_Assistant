@@ -5,6 +5,7 @@ import { PlusIcon, DocumentIcon, CloudIcon, ChatBubbleLeftRightIcon, ArrowPathIc
 import HubCard from '@/components/HubCard'
 import CreateHubModal from '@/components/CreateHubModal'
 import toast from 'react-hot-toast'
+import { apiClient } from '@/lib/api'
 
 interface Hub {
   hub_name: string
@@ -77,7 +78,7 @@ export default function DashboardPage() {
   const fetchHubs = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true)
     try {
-      const response = await fetch('/api/hubs')
+      const response = await apiClient.get('/hubs')
       if (response.ok) {
         const data = await response.json()
         setHubs(data.hubs)
@@ -95,7 +96,7 @@ export default function DashboardPage() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const response = await fetch('/api/hubs/loaded/list')
+      const response = await apiClient.get('/hubs/loaded/list')
       if (response.ok) {
         const data = await response.json()
         setStats(prev => ({ ...prev, loadedHubs: data.count }))
@@ -126,13 +127,14 @@ export default function DashboardPage() {
 
   const handleCreateHub = async (hubData: any) => {
     try {
-      const response = await fetch('/api/hubs/from-sharepoint', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(hubData),
-      })
+      let response;
+      if (hubData instanceof FormData) {
+        // Upload files
+        response = await apiClient.upload('/hubs/from-upload', hubData)
+      } else {
+        // SharePoint
+        response = await apiClient.post('/hubs/from-sharepoint', hubData)
+      }
 
       if (response.ok) {
         const result = await response.json()
@@ -140,8 +142,28 @@ export default function DashboardPage() {
         setShowCreateModal(false)
         fetchHubs()
       } else {
-        const error = await response.json()
-        toast.error(error.detail || 'Failed to create hub')
+        let errorMessage = 'Failed to create hub'
+        try {
+          const error = await response.json()
+          if (error.detail) {
+            if (Array.isArray(error.detail)) {
+              errorMessage = error.detail.map((err: any) => err.msg || err.message || JSON.stringify(err)).join(', ')
+            } else if (typeof error.detail === 'string') {
+              errorMessage = error.detail
+            } else if (error.detail.msg) {
+              errorMessage = error.detail.msg
+            } else {
+              errorMessage = JSON.stringify(error.detail)
+            }
+          } else if (error.message && typeof error.message === 'string') {
+            errorMessage = error.message
+          } else {
+            errorMessage = JSON.stringify(error)
+          }
+        } catch (parseError) {
+          errorMessage = `Server error (${response.status}): ${response.statusText}`
+        }
+        toast.error(errorMessage)
       }
     } catch (error) {
       console.error('Failed to create hub:', error)
@@ -269,6 +291,7 @@ export default function DashboardPage() {
       {/* Create Hub Modal */}
       {showCreateModal && (
         <CreateHubModal
+          show={showCreateModal}
           onClose={() => setShowCreateModal(false)}
           onCreate={handleCreateHub}
         />
