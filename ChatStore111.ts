@@ -644,9 +644,6 @@ export const useChatStore = create<ChatState>()(
             const response = await api.sendMessage(chatId, content);
             const fullMessage = response.message;
 
-            // Add empty assistant message first to show streaming cursor
-            addMessage(chatId, { role: 'assistant', content: '', timestamp: new Date().toISOString() });
-
             // Set loading to false but keep streaming true for cursor
             set({ isLoading: false });
 
